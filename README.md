@@ -7,7 +7,15 @@ binary for macOS, Linux, and Windows.
 
 - Rust toolchain (stable)
 
-## Build
+## Build & Install
+
+To build and install `cozyutils` to `~/.cozyutils` and add it to your `PATH` automatically:
+
+```bash
+./install.sh
+```
+
+Alternatively, for a manual build:
 
 ```bash
 cargo build --release
