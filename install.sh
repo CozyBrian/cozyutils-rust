@@ -31,7 +31,7 @@ else
 fi
 
 # Add to PATH if not already present
-PATH_ENTRY="export PATH=\"\$HOME/.cozyutils:\$PATH\""
+PATH_ENTRY="export PATH=\"\$HOME/.cozyutils/bin:\$PATH\""
 UPDATED=false
 
 # Check if INSTALL_DIR is in PATH
