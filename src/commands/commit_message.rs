@@ -3,7 +3,8 @@ use crate::utils::config::{load_default_backend, load_gemini_api_key};
 use crate::utils::fs::write_string;
 use crate::utils::message::{copy_to_clipboard, generate_text, run_git_command};
 
-const DEFAULT_MODEL: &str = "gemini-3-flash-preview";
+const DEFAULT_GEMINI_MODEL: &str = "gemini-3-flash-preview";
+const DEFAULT_OPENCODE_MODEL: &str = "openai/gpt-5.4-mini";
 
 #[derive(Debug)]
 struct CommitParts {
@@ -35,17 +36,20 @@ fn split_commit_message(text: &str) -> CommitParts {
 pub fn commit_message(args: Vec<String>) -> Result<(), String> {
     let parsed = parse_args(&args);
     let output_path = parsed.options.get("out").cloned().unwrap_or_default();
-    let model = parsed
-        .options
-        .get("model")
-        .cloned()
-        .unwrap_or_else(|| DEFAULT_MODEL.to_string());
     let backend = parsed
         .options
         .get("backend")
         .cloned()
         .or_else(load_default_backend)
         .unwrap_or_else(|| "gemini".to_string());
+    let model = parsed
+        .options
+        .get("model")
+        .cloned()
+        .unwrap_or_else(|| match backend.as_str() {
+            "opencode" => DEFAULT_OPENCODE_MODEL.to_string(),
+            _ => DEFAULT_GEMINI_MODEL.to_string(),
+        });
     let clipboard_only = parsed.options.get("clipboard-only").is_some();
     let clipboard = clipboard_only
         || parsed.options.get("clipboard").is_some()
@@ -54,7 +58,7 @@ pub fn commit_message(args: Vec<String>) -> Result<(), String> {
 
     if parsed.options.get("help").is_some() {
         println!(
-            "Usage: -cmsg [--out=path] [--model=gemini-3-flash-preview] [--backend=gemini|apple] [--clipboard] [--clipboard-only] [--commit]"
+            "Usage: -cmsg [--out=path] [--model=MODEL] [--backend=gemini|opencode] [--clipboard] [--clipboard-only] [--commit]"
         );
         return Ok(());
     }

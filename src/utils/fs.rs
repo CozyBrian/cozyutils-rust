@@ -56,9 +56,9 @@ pub fn make_component_name(filename: &str) -> String {
 
 pub fn component_template(component_name: &str, content: &str) -> String {
     let template = format!(
-    "\
+        "\
 import React from \"react\";\n\nfunction {component_name}(props: React.JSX.IntrinsicElements[\"svg\"]) {{\n  return (\n    {content}\n  );\n}}\n\nexport default {component_name};\n"
-  );
+    );
     format_svg_component(&template)
 }
 

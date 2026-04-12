@@ -1,11 +1,10 @@
 use std::io::Write;
+use std::path::PathBuf;
 use std::process::Command;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Deserialize;
 use serde_json::json;
-
-#[cfg(feature = "apple")]
-use fm_bindings::{Error as AppleError, LanguageModelSession};
 
 const CLIPBOARD_COMMANDS: &[(&[&str], &str)] = &[
     (&["pbcopy"], "pbcopy"),
@@ -39,6 +38,18 @@ struct GeminiPart {
 #[derive(Debug, Deserialize)]
 struct GeminiError {
     message: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenCodeEvent {
+    #[serde(rename = "type")]
+    event_type: String,
+    part: Option<OpenCodePart>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenCodePart {
+    text: Option<String>,
 }
 
 pub fn run_git_command(args: &[&str], label: &str) -> Result<String, String> {
@@ -115,34 +126,62 @@ pub fn generate_gemini_text(api_key: &str, model: &str, prompt: &str) -> Result<
     Ok(text)
 }
 
-#[cfg(feature = "apple")]
-pub fn generate_apple_text(prompt: &str) -> Result<String, String> {
-    let session = LanguageModelSession::new().map_err(map_apple_error)?;
-    let text = session.response(prompt).map_err(map_apple_error)?;
-    let text = text.trim().to_string();
+pub fn generate_opencode_text(model: &str, prompt: &str) -> Result<String, String> {
+    let prompt_path = write_temp_prompt(prompt)?;
+    let output = Command::new("opencode")
+        .args([
+            "run",
+            "--format",
+            "json",
+            "--model",
+            model,
+            "--file",
+            prompt_path.to_str().unwrap_or(""),
+            "--",
+            "Read the attached file and follow its instructions. Output only the requested response with no extra commentary.",
+        ])
+        .output();
+    let _ = std::fs::remove_file(&prompt_path);
+
+    let output = match output {
+        Ok(output) => output,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Err(
+                "opencode is not installed. Install it from https://opencode.ai/install"
+                    .to_string(),
+            );
+        }
+        Err(error) => return Err(format!("opencode run failed: {}", error)),
+    };
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let message = if !stderr.is_empty() { stderr } else { stdout };
+        let suffix = if message.is_empty() {
+            "".to_string()
+        } else {
+            format!(": {}", message)
+        };
+        return Err(format!("opencode run failed{}", suffix));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let text = stdout
+        .lines()
+        .filter_map(|line| serde_json::from_str::<OpenCodeEvent>(line).ok())
+        .filter(|event| event.event_type == "text")
+        .filter_map(|event| event.part.and_then(|part| part.text))
+        .collect::<Vec<_>>()
+        .join("")
+        .trim()
+        .to_string();
 
     if text.is_empty() {
-        return Err("Apple Intelligence response was empty.".to_string());
+        return Err("OpenCode response was empty.".to_string());
     }
 
     Ok(text)
-}
-
-#[cfg(feature = "apple")]
-fn map_apple_error(error: AppleError) -> String {
-    match error {
-        AppleError::ModelNotAvailable => {
-            "Apple Intelligence is not available. Requires macOS 26+ with Apple Intelligence enabled."
-                .to_string()
-        }
-        AppleError::InvalidInput(message) => {
-            format!("Apple Intelligence rejected the prompt: {}", message)
-        }
-        AppleError::GenerationError(message) => {
-            format!("Apple Intelligence generation failed: {}", message)
-        }
-        other => format!("Apple Intelligence request failed: {}", other),
-    }
 }
 
 pub fn generate_text(
@@ -159,25 +198,27 @@ pub fn generate_text(
             })?;
             generate_gemini_text(api_key, model, prompt)
         }
-        "apple" => generate_apple_backend_text(prompt),
+        "opencode" => generate_opencode_text(model, prompt),
         _ => Err(format!(
-            "Unsupported backend '{}'. Use 'gemini' or 'apple'.",
+            "Unsupported backend '{}'. Use 'gemini' or 'opencode'.",
             backend
         )),
     }
 }
 
-#[cfg(feature = "apple")]
-fn generate_apple_backend_text(prompt: &str) -> Result<String, String> {
-    generate_apple_text(prompt)
-}
-
-#[cfg(not(feature = "apple"))]
-fn generate_apple_backend_text(_prompt: &str) -> Result<String, String> {
-    Err(
-        "Apple backend is not available in this build. Rebuild with `--features apple`."
-            .to_string(),
-    )
+fn write_temp_prompt(prompt: &str) -> Result<PathBuf, String> {
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| format!("Failed to generate temp filename: {}", error))?
+        .as_millis();
+    let path = std::env::temp_dir().join(format!(
+        "cozyutils-opencode-prompt-{}-{}.txt",
+        std::process::id(),
+        timestamp
+    ));
+    std::fs::write(&path, prompt)
+        .map_err(|error| format!("Failed to write temp prompt: {}", error))?;
+    Ok(path)
 }
 
 pub fn copy_to_clipboard(text: &str) -> Result<String, String> {
