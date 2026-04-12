@@ -33,6 +33,7 @@ fn main() {
             rest,
         ),
         "-cmsg" => commands::commit_message::commit_message(rest),
+        "-config" => commands::config::config_command(rest),
         "-prmsg" => commands::pr_message::pr_message(rest),
         _ => {
             println!("Invalid command");

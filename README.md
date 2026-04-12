@@ -68,11 +68,13 @@ The CLI flags mirror the Bun version.
 
 - `-svg2tsx <directory> [--ext=.svg] [--dry-run] [--force] [--no-move]`
 - `-img2export <directory> <output_file> [--ext=.svg,.png] [--dry-run]`
-- `-prmsg [--base=origin/dev] [--out=path] [--model=gemini-3-flash-preview] [--clipboard] [--clipboard-only] [--copy]`
+- `-prmsg [--base=origin/dev] [--out=path] [--model=MODEL] [--backend=gemini|opencode] [--clipboard] [--clipboard-only] [--copy]`
+- `-cmsg [--out=path] [--model=MODEL] [--backend=gemini|opencode] [--clipboard] [--clipboard-only] [--commit]`
+- `-config [--show] [--path] [--set-backend=gemini|opencode] [--unset-backend] [--set-key=VALUE] [--unset-key]`
 
-## Environment
+## Config
 
-The `-prmsg` command looks for the API key in this order:
+Gemini-backed commands look for the API key in this order:
 
 1) `GEMINI_API_KEY` environment variable
 2) `~/.cozyutils/config.json`
@@ -81,12 +83,15 @@ The `-prmsg` command looks for the API key in this order:
 
 ```json
 {
-  "gemini_api_key": "YOUR_KEY_HERE"
+  "gemini_api_key": "YOUR_KEY_HERE",
+  "backend": "opencode"
 }
 ```
 
-You can create the config with:
+You can create or update the config with:
 
 ```bash
 ./cozyutils -prmsg --setup --key=YOUR_KEY
+./cozyutils -config --set-backend=opencode
+./cozyutils -config --show
 ```

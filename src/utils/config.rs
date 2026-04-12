@@ -4,16 +4,14 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Deserialize, Serialize)]
-struct CozyConfig {
-    gemini_api_key: Option<String>,
-    backend: Option<String>,
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct CozyConfig {
+    pub gemini_api_key: Option<String>,
+    pub backend: Option<String>,
 }
 
 fn load_config() -> Option<CozyConfig> {
-    let path = config_path()?;
-    let content = fs::read_to_string(path).ok()?;
-    serde_json::from_str(&content).ok()
+    read_config().ok()
 }
 
 fn resolve_home_dir() -> Option<PathBuf> {
@@ -32,8 +30,20 @@ fn resolve_home_dir() -> Option<PathBuf> {
     None
 }
 
-fn config_path() -> Option<PathBuf> {
+pub fn config_path() -> Option<PathBuf> {
     resolve_home_dir().map(|home| home.join(".cozyutils").join("config.json"))
+}
+
+pub fn read_config() -> Result<CozyConfig, String> {
+    let path = config_path().ok_or_else(|| "Failed to resolve home directory.".to_string())?;
+    let content = fs::read_to_string(&path)
+        .map_err(|error| format!("Failed to read config {}: {}", path.display(), error))?;
+    serde_json::from_str(&content)
+        .map_err(|error| format!("Failed to parse config {}: {}", path.display(), error))
+}
+
+pub fn load_config_or_default() -> CozyConfig {
+    load_config().unwrap_or_default()
 }
 
 pub fn load_config_api_key() -> Option<String> {
@@ -62,27 +72,36 @@ pub fn load_gemini_api_key() -> Result<String, String> {
         })
 }
 
-pub fn write_config(api_key: Option<&str>, backend: Option<&str>) -> Result<PathBuf, String> {
+pub fn update_config(
+    api_key: Option<Option<&str>>,
+    backend: Option<Option<&str>>,
+) -> Result<PathBuf, String> {
     let path = config_path().ok_or_else(|| "Failed to resolve home directory.".to_string())?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
             .map_err(|error| format!("Failed to create config directory: {}", error))?;
     }
 
-    let existing = load_config();
+    let existing = load_config_or_default();
     let config = CozyConfig {
-        gemini_api_key: api_key.map(|value| value.to_string()).or_else(|| {
-            existing
-                .as_ref()
-                .and_then(|config| config.gemini_api_key.clone())
-        }),
-        backend: backend
-            .map(|value| value.to_string())
-            .or_else(|| existing.and_then(|config| config.backend)),
+        gemini_api_key: match api_key {
+            Some(Some(value)) => Some(value.to_string()),
+            Some(None) => None,
+            None => existing.gemini_api_key,
+        },
+        backend: match backend {
+            Some(Some(value)) => Some(value.to_string()),
+            Some(None) => None,
+            None => existing.backend,
+        },
     };
     let content = serde_json::to_string_pretty(&config)
         .map_err(|error| format!("Failed to serialize config: {}", error))?;
     fs::write(&path, format!("{}\n", content))
         .map_err(|error| format!("Failed to write config: {}", error))?;
     Ok(path)
+}
+
+pub fn write_config(api_key: Option<&str>, backend: Option<&str>) -> Result<PathBuf, String> {
+    update_config(Some(api_key), Some(backend))
 }
