@@ -4,6 +4,9 @@ use std::process::Command;
 use serde::Deserialize;
 use serde_json::json;
 
+#[cfg(feature = "apple")]
+use fm_bindings::{Error as AppleError, LanguageModelSession};
+
 const CLIPBOARD_COMMANDS: &[(&[&str], &str)] = &[
     (&["pbcopy"], "pbcopy"),
     (&["wl-copy"], "wl-copy"),
@@ -110,6 +113,71 @@ pub fn generate_gemini_text(api_key: &str, model: &str, prompt: &str) -> Result<
     }
 
     Ok(text)
+}
+
+#[cfg(feature = "apple")]
+pub fn generate_apple_text(prompt: &str) -> Result<String, String> {
+    let session = LanguageModelSession::new().map_err(map_apple_error)?;
+    let text = session.response(prompt).map_err(map_apple_error)?;
+    let text = text.trim().to_string();
+
+    if text.is_empty() {
+        return Err("Apple Intelligence response was empty.".to_string());
+    }
+
+    Ok(text)
+}
+
+#[cfg(feature = "apple")]
+fn map_apple_error(error: AppleError) -> String {
+    match error {
+        AppleError::ModelNotAvailable => {
+            "Apple Intelligence is not available. Requires macOS 26+ with Apple Intelligence enabled."
+                .to_string()
+        }
+        AppleError::InvalidInput(message) => {
+            format!("Apple Intelligence rejected the prompt: {}", message)
+        }
+        AppleError::GenerationError(message) => {
+            format!("Apple Intelligence generation failed: {}", message)
+        }
+        other => format!("Apple Intelligence request failed: {}", other),
+    }
+}
+
+pub fn generate_text(
+    backend: &str,
+    api_key: Option<&str>,
+    model: &str,
+    prompt: &str,
+) -> Result<String, String> {
+    match backend {
+        "gemini" => {
+            let api_key = api_key.ok_or_else(|| {
+                "Missing GEMINI_API_KEY environment variable or ~/.cozyutils/config.json entry."
+                    .to_string()
+            })?;
+            generate_gemini_text(api_key, model, prompt)
+        }
+        "apple" => generate_apple_backend_text(prompt),
+        _ => Err(format!(
+            "Unsupported backend '{}'. Use 'gemini' or 'apple'.",
+            backend
+        )),
+    }
+}
+
+#[cfg(feature = "apple")]
+fn generate_apple_backend_text(prompt: &str) -> Result<String, String> {
+    generate_apple_text(prompt)
+}
+
+#[cfg(not(feature = "apple"))]
+fn generate_apple_backend_text(_prompt: &str) -> Result<String, String> {
+    Err(
+        "Apple backend is not available in this build. Rebuild with `--features apple`."
+            .to_string(),
+    )
 }
 
 pub fn copy_to_clipboard(text: &str) -> Result<String, String> {

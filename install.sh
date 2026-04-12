@@ -8,8 +8,45 @@ GREEN='\033[0;32m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-echo -e "${BLUE}Building cozyutils in release mode...${NC}"
-RUSTFLAGS="-C link-arg=-s" cargo build --release
+usage() {
+  echo "Usage: ./install.sh [--apple]"
+  echo "  --apple   Build with Apple Intelligence backend support"
+}
+
+ENABLE_APPLE=false
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+  --apple)
+    ENABLE_APPLE=true
+    ;;
+  --help |-h)
+    usage
+    exit 0
+    ;;
+  *)
+    echo -e "\033[0;31mError: Unknown option '$1'\033[0m"
+    usage
+    exit 1
+    ;;
+  esac
+  shift
+done
+
+BUILD_ARGS=(--release)
+
+if [ "$ENABLE_APPLE" = true ]; then
+  if [ "$(uname -s)" != "Darwin" ]; then
+    echo -e "\033[0;31mError: --apple is only supported on macOS builds.\033[0m"
+    exit 1
+  fi
+  BUILD_ARGS+=(--features apple)
+  echo -e "${BLUE}Building cozyutils in release mode with Apple Intelligence support...${NC}"
+else
+  echo -e "${BLUE}Building cozyutils in release mode...${NC}"
+fi
+
+RUSTFLAGS="-C link-arg=-s" cargo build "${BUILD_ARGS[@]}"
 
 # Define installation directory
 INSTALL_DIR="$HOME/.cozyutils/bin"
@@ -60,3 +97,7 @@ else
 fi
 
 echo -e "Try running: ${GREEN}cozyutils -h${NC}"
+
+if [ "$ENABLE_APPLE" = true ]; then
+  echo -e "Apple backend is available. Try: ${GREEN}cozyutils -prmsg --backend apple${NC}"
+fi

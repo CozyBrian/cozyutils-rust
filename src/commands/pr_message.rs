@@ -3,9 +3,9 @@ use std::path::Path;
 use std::process::Command;
 
 use crate::cli::args::parse_args;
-use crate::utils::config::{load_gemini_api_key, write_config};
+use crate::utils::config::{load_default_backend, load_gemini_api_key, write_config};
 use crate::utils::fs::write_string;
-use crate::utils::message::{copy_to_clipboard, generate_gemini_text, run_git_command};
+use crate::utils::message::{copy_to_clipboard, generate_text, run_git_command};
 
 const DEFAULT_BASE_REF: &str = "origin/dev";
 const DEFAULT_MODEL: &str = "gemini-3-flash-preview";
@@ -63,6 +63,12 @@ pub fn pr_message(args: Vec<String>) -> Result<(), String> {
         .get("model")
         .cloned()
         .unwrap_or_else(|| DEFAULT_MODEL.to_string());
+    let backend = parsed
+        .options
+        .get("backend")
+        .cloned()
+        .or_else(load_default_backend)
+        .unwrap_or_else(|| "gemini".to_string());
     let clipboard_only = parsed.options.get("clipboard-only").is_some();
     let clipboard = clipboard_only
         || parsed.options.get("clipboard").is_some()
@@ -71,27 +77,28 @@ pub fn pr_message(args: Vec<String>) -> Result<(), String> {
 
     if parsed.options.get("help").is_some() {
         println!(
-      "Usage: -prmsg [--base=origin/dev] [--out=path] [--model=gemini-3-flash-preview] [--clipboard] [--clipboard-only] [--setup]"
-    );
+            "Usage: -prmsg [--base=origin/dev] [--out=path] [--model=gemini-3-flash-preview] [--backend=gemini|apple] [--clipboard] [--clipboard-only] [--setup]"
+        );
         return Ok(());
     }
 
     if setup {
         let api_key = env::var("GEMINI_API_KEY")
-            .or_else(|_| {
-                parsed
-                    .options
-                    .get("key")
-                    .cloned()
-                    .ok_or_else(|| env::VarError::NotPresent)
-            })
-            .map_err(|_| "Provide the API key via GEMINI_API_KEY or --key.".to_string())?;
-        let path = write_config(&api_key)?;
+            .ok()
+            .or_else(|| parsed.options.get("key").cloned());
+        if backend == "gemini" && api_key.is_none() {
+            return Err("Provide the API key via GEMINI_API_KEY or --key.".to_string());
+        }
+        let path = write_config(api_key.as_deref(), Some(&backend))?;
         println!("prMessage - Config written to {}", path.display());
         return Ok(());
     }
 
-    let api_key = load_gemini_api_key()?;
+    let api_key = if backend == "gemini" {
+        Some(load_gemini_api_key()?)
+    } else {
+        None
+    };
 
     let resolved_base_ref = resolve_base_ref(&base_ref)?;
     let status = run_git_command(&["status"], "status")?;
@@ -136,7 +143,7 @@ pub fn pr_message(args: Vec<String>) -> Result<(), String> {
     ]
     .join("\n");
 
-    let pr_message_text = generate_gemini_text(&api_key, &model, &prompt)?;
+    let pr_message_text = generate_text(&backend, api_key.as_deref(), &model, &prompt)?;
 
     if !output_path.is_empty() && !clipboard_only {
         let path = Path::new(&output_path);

@@ -7,6 +7,13 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Deserialize, Serialize)]
 struct CozyConfig {
     gemini_api_key: Option<String>,
+    backend: Option<String>,
+}
+
+fn load_config() -> Option<CozyConfig> {
+    let path = config_path()?;
+    let content = fs::read_to_string(path).ok()?;
+    serde_json::from_str(&content).ok()
 }
 
 fn resolve_home_dir() -> Option<PathBuf> {
@@ -30,12 +37,17 @@ fn config_path() -> Option<PathBuf> {
 }
 
 pub fn load_config_api_key() -> Option<String> {
-    let home = resolve_home_dir()?;
-    let path = home.join(".cozyutils").join("config.json");
-    let content = fs::read_to_string(path).ok()?;
-    let config: CozyConfig = serde_json::from_str(&content).ok()?;
+    let config = load_config()?;
     config
         .gemini_api_key
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+pub fn load_default_backend() -> Option<String> {
+    let config = load_config()?;
+    config
+        .backend
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
 }
@@ -50,15 +62,23 @@ pub fn load_gemini_api_key() -> Result<String, String> {
         })
 }
 
-pub fn write_config(api_key: &str) -> Result<PathBuf, String> {
+pub fn write_config(api_key: Option<&str>, backend: Option<&str>) -> Result<PathBuf, String> {
     let path = config_path().ok_or_else(|| "Failed to resolve home directory.".to_string())?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
             .map_err(|error| format!("Failed to create config directory: {}", error))?;
     }
 
+    let existing = load_config();
     let config = CozyConfig {
-        gemini_api_key: Some(api_key.to_string()),
+        gemini_api_key: api_key.map(|value| value.to_string()).or_else(|| {
+            existing
+                .as_ref()
+                .and_then(|config| config.gemini_api_key.clone())
+        }),
+        backend: backend
+            .map(|value| value.to_string())
+            .or_else(|| existing.and_then(|config| config.backend)),
     };
     let content = serde_json::to_string_pretty(&config)
         .map_err(|error| format!("Failed to serialize config: {}", error))?;

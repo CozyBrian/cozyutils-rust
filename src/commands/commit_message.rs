@@ -1,7 +1,7 @@
 use crate::cli::args::parse_args;
-use crate::utils::config::load_gemini_api_key;
+use crate::utils::config::{load_default_backend, load_gemini_api_key};
 use crate::utils::fs::write_string;
-use crate::utils::message::{copy_to_clipboard, generate_gemini_text, run_git_command};
+use crate::utils::message::{copy_to_clipboard, generate_text, run_git_command};
 
 const DEFAULT_MODEL: &str = "gemini-3-flash-preview";
 
@@ -40,6 +40,12 @@ pub fn commit_message(args: Vec<String>) -> Result<(), String> {
         .get("model")
         .cloned()
         .unwrap_or_else(|| DEFAULT_MODEL.to_string());
+    let backend = parsed
+        .options
+        .get("backend")
+        .cloned()
+        .or_else(load_default_backend)
+        .unwrap_or_else(|| "gemini".to_string());
     let clipboard_only = parsed.options.get("clipboard-only").is_some();
     let clipboard = clipboard_only
         || parsed.options.get("clipboard").is_some()
@@ -48,12 +54,16 @@ pub fn commit_message(args: Vec<String>) -> Result<(), String> {
 
     if parsed.options.get("help").is_some() {
         println!(
-      "Usage: -cmsg [--out=path] [--model=gemini-3-flash-preview] [--clipboard] [--clipboard-only] [--commit]"
-    );
+            "Usage: -cmsg [--out=path] [--model=gemini-3-flash-preview] [--backend=gemini|apple] [--clipboard] [--clipboard-only] [--commit]"
+        );
         return Ok(());
     }
 
-    let api_key = load_gemini_api_key()?;
+    let api_key = if backend == "gemini" {
+        Some(load_gemini_api_key()?)
+    } else {
+        None
+    };
 
     let status = run_git_command(&["status"], "status")?;
     let diff_stat = run_git_command(&["diff", "--cached", "--stat"], "diff --cached --stat")?;
@@ -79,7 +89,7 @@ pub fn commit_message(args: Vec<String>) -> Result<(), String> {
   ]
   .join("\n");
 
-    let commit_message_text = generate_gemini_text(&api_key, &model, &prompt)?;
+    let commit_message_text = generate_text(&backend, api_key.as_deref(), &model, &prompt)?;
 
     if should_commit {
         let parts = split_commit_message(&commit_message_text);
