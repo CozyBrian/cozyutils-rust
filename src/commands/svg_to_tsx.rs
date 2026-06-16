@@ -11,20 +11,19 @@ use crate::utils::fs::{
 
 pub fn svg_to_tsx(args: Vec<String>) -> Result<(), String> {
     let parsed = parse_args(&args);
-    let directory = parsed.positional.get(0).cloned().unwrap_or_default();
-    let dry_run = parsed.options.get("dry-run").is_some();
-    let force = parsed.options.get("force").is_some();
-    let no_move = parsed.options.get("no-move").is_some();
+    let directory = parsed.positional.first().cloned().unwrap_or_default();
+    let dry_run = parsed.options.contains_key("dry-run");
+    let force = parsed.options.contains_key("force");
+    let no_move = parsed.options.contains_key("no-move");
     let custom_extensions = parsed.options.get("ext").cloned().unwrap_or_default();
 
-    if parsed.options.get("help").is_some() {
+    if parsed.options.contains_key("help") {
         println!("Usage: -svg2tsx <directory> [--ext=.svg] [--dry-run] [--force] [--no-move]");
         return Ok(());
     }
 
     if directory.is_empty() {
-        println!("Missing required argument. Expected: <directory>");
-        return Ok(());
+        return Err("Missing required argument. Expected: <directory>".to_string());
     }
 
     let ext_list: Vec<String> = if !custom_extensions.is_empty() {
@@ -36,16 +35,15 @@ pub fn svg_to_tsx(args: Vec<String>) -> Result<(), String> {
         vec![".svg".to_string()]
     };
 
-    let files = read_dir_and_sort(&directory, &ext_list);
+    let files = read_dir_and_sort(&directory, &ext_list)?;
 
     if files.is_empty() {
-        println!("No matching files found in {}", directory);
-        return Ok(());
+        return Err(format!("No matching files found in {}", directory));
     }
 
     let dashed_attribute_regex =
         Regex::new(r"(\w+)-(\w+)").map_err(|error| format!("Invalid regex: {}", error))?;
-    let fill_regex = Regex::new(r###"fill="(?!none)([^"\s]+)""###)
+    let fill_regex = Regex::new(r###"fill="([^"\s]+)""###)
         .map_err(|error| format!("Invalid regex: {}", error))?;
     let stroke_hex_regex = Regex::new(r###"stroke="#([^"\s]+)""###)
         .map_err(|error| format!("Invalid regex: {}", error))?;
@@ -66,13 +64,24 @@ pub fn svg_to_tsx(args: Vec<String>) -> Result<(), String> {
                 let mut uppercase = second.chars();
                 match uppercase.next() {
                     Some(ch) => format!("{}{}{}", first, ch.to_uppercase(), uppercase.as_str()),
-                    None => format!("{}", first),
+                    None => first.to_string(),
                 }
             })
             .to_string();
 
         content = fill_regex
-            .replace_all(&content, "fill=\"currentColor\"")
+            .replace_all(&content, |captures: &regex::Captures| {
+                let fill = captures.get(1).map(|value| value.as_str()).unwrap_or("");
+                if fill.eq_ignore_ascii_case("none") {
+                    captures
+                        .get(0)
+                        .map(|value| value.as_str())
+                        .unwrap_or("")
+                        .to_string()
+                } else {
+                    "fill=\"currentColor\"".to_string()
+                }
+            })
             .to_string();
         content = stroke_hex_regex
             .replace_all(&content, "stroke=\"currentColor\"")
@@ -83,11 +92,8 @@ pub fn svg_to_tsx(args: Vec<String>) -> Result<(), String> {
         content = content.replace("class=\"", "className=\"");
         content = content.replace("clip-rule=\"", "clipRule=\"");
         content = content.replace("fill-rule=\"", "fillRule=\"");
-        content = content.replace("stroke-linecap=\"", "strokeLinecap=\"");
-        content = content.replace("stroke-linejoin=\"", "strokeLinejoin=\"");
-        content = content.replace("stroke-width=\"", "strokeWidth=\"");
 
-        let component_content = component_template(&component_name, &content);
+        let component_content = component_template(&component_name, &content)?;
         let output_path = Path::new(&directory).join(format!("{}.tsx", component_name));
 
         if output_path.exists() && !force {

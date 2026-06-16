@@ -91,20 +91,14 @@ pub fn generate_gemini_text(api_key: &str, model: &str, prompt: &str) -> Result<
         .send_json(body)
         .map_err(|error| format!("Gemini API request failed: {}", error))?;
 
-    let status = response.status();
-    if status >= 400 {
-        let message = response.into_string().unwrap_or_else(|_| "".to_string());
-        return Err(format!("Gemini API request failed: {} {}", status, message));
-    }
-
     let data: GeminiResponse = response
         .into_json()
         .map_err(|error| format!("Gemini API response parse failed: {}", error))?;
 
-    if let Some(error) = data.error {
-        if let Some(message) = error.message {
-            return Err(format!("Gemini API error: {}", message));
-        }
+    if let Some(error) = data.error
+        && let Some(message) = error.message
+    {
+        return Err(format!("Gemini API error: {}", message));
     }
 
     let text = data
@@ -128,6 +122,12 @@ pub fn generate_gemini_text(api_key: &str, model: &str, prompt: &str) -> Result<
 
 pub fn generate_opencode_text(model: &str, prompt: &str) -> Result<String, String> {
     let prompt_path = write_temp_prompt(prompt)?;
+    let prompt_path_str = prompt_path.to_str().ok_or_else(|| {
+        format!(
+            "Temp prompt path is not valid UTF-8: {}",
+            prompt_path.display()
+        )
+    })?;
     let output = Command::new("opencode")
         .args([
             "run",
@@ -136,7 +136,7 @@ pub fn generate_opencode_text(model: &str, prompt: &str) -> Result<String, Strin
             "--model",
             model,
             "--file",
-            prompt_path.to_str().unwrap_or(""),
+            prompt_path_str,
             "--",
             "Read the attached file and follow its instructions. Output only the requested response with no extra commentary.",
         ])
@@ -234,10 +234,10 @@ pub fn copy_to_clipboard(text: &str) -> Result<String, String> {
             Err(_) => continue,
         };
 
-        if let Some(mut stdin) = child.stdin.take() {
-            if stdin.write_all(text.as_bytes()).is_err() {
-                continue;
-            }
+        if let Some(mut stdin) = child.stdin.take()
+            && stdin.write_all(text.as_bytes()).is_err()
+        {
+            continue;
         }
 
         if child.wait().map(|status| status.success()).unwrap_or(false) {

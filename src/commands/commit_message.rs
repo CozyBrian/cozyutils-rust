@@ -50,13 +50,13 @@ pub fn commit_message(args: Vec<String>) -> Result<(), String> {
             "opencode" => DEFAULT_OPENCODE_MODEL.to_string(),
             _ => DEFAULT_GEMINI_MODEL.to_string(),
         });
-    let clipboard_only = parsed.options.get("clipboard-only").is_some();
+    let clipboard_only = parsed.options.contains_key("clipboard-only");
     let clipboard = clipboard_only
-        || parsed.options.get("clipboard").is_some()
-        || parsed.options.get("copy").is_some();
-    let should_commit = parsed.options.get("commit").is_some();
+        || parsed.options.contains_key("clipboard")
+        || parsed.options.contains_key("copy");
+    let should_commit = parsed.options.contains_key("commit");
 
-    if parsed.options.get("help").is_some() {
+    if parsed.options.contains_key("help") {
         println!(
             "Usage: -cmsg [--out=path] [--model=MODEL] [--backend=gemini|opencode] [--clipboard] [--clipboard-only] [--commit]"
         );
@@ -113,10 +113,8 @@ pub fn commit_message(args: Vec<String>) -> Result<(), String> {
             std::path::Path::new(&output_path),
             &format!("{}\n", commit_message_text),
         )?;
-        if clipboard {
-            if let Err(error) = copy_to_clipboard(&commit_message_text) {
-                println!("{}", error);
-            }
+        if clipboard && let Err(error) = copy_to_clipboard(&commit_message_text) {
+            eprintln!("{}", error);
         }
         return Ok(());
     }
@@ -125,11 +123,45 @@ pub fn commit_message(args: Vec<String>) -> Result<(), String> {
         println!("{}", commit_message_text);
     }
 
-    if clipboard {
-        if let Err(error) = copy_to_clipboard(&commit_message_text) {
-            println!("{}", error);
-        }
+    if clipboard && let Err(error) = copy_to_clipboard(&commit_message_text) {
+        eprintln!("{}", error);
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::split_commit_message;
+
+    #[test]
+    fn splits_subject_and_body_after_blank_line() {
+        let parts = split_commit_message(
+            "feat: improve svg conversion\n\n- preserve fill=\"none\"\n- exit non-zero on failure\n",
+        );
+
+        assert_eq!(parts.subject, "feat: improve svg conversion");
+        assert_eq!(
+            parts.body,
+            "- preserve fill=\"none\"\n- exit non-zero on failure"
+        );
+    }
+
+    #[test]
+    fn returns_empty_parts_for_blank_message() {
+        let parts = split_commit_message("  \n\n  ");
+
+        assert!(parts.subject.is_empty());
+        assert!(parts.body.is_empty());
+    }
+
+    #[test]
+    fn discards_leading_body_text_before_first_blank_line() {
+        let parts = split_commit_message(
+            "fix: parser flag handling\nsummary line\n\n- keep current behavior\n- add tests\n",
+        );
+
+        assert_eq!(parts.subject, "fix: parser flag handling");
+        assert_eq!(parts.body, "- keep current behavior\n- add tests");
+    }
 }

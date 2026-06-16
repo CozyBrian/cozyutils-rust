@@ -6,19 +6,18 @@ use crate::utils::fs::{make_component_name, read_dir_and_sort, write_string};
 
 pub fn any_to_export(extensions: Vec<&str>, args: Vec<String>) -> Result<(), String> {
     let parsed = parse_args(&args);
-    let directory = parsed.positional.get(0).cloned().unwrap_or_default();
+    let directory = parsed.positional.first().cloned().unwrap_or_default();
     let output_file = parsed.positional.get(1).cloned().unwrap_or_default();
-    let dry_run = parsed.options.get("dry-run").is_some();
+    let dry_run = parsed.options.contains_key("dry-run");
     let custom_extensions = parsed.options.get("ext").cloned().unwrap_or_default();
 
-    if parsed.options.get("help").is_some() {
+    if parsed.options.contains_key("help") {
         println!("Usage: -img2export <directory> <output_file> [--ext=.svg,.png] [--dry-run]");
         return Ok(());
     }
 
     if directory.is_empty() || output_file.is_empty() {
-        println!("Missing required arguments. Expected: <directory> <output_file>");
-        return Ok(());
+        return Err("Missing required arguments. Expected: <directory> <output_file>".to_string());
     }
 
     let ext_list: Vec<String> = if !custom_extensions.is_empty() {
@@ -30,11 +29,10 @@ pub fn any_to_export(extensions: Vec<&str>, args: Vec<String>) -> Result<(), Str
         extensions.iter().map(|ext| ext.to_string()).collect()
     };
 
-    let files = read_dir_and_sort(&directory, &ext_list);
+    let files = read_dir_and_sort(&directory, &ext_list)?;
 
     if files.is_empty() {
-        println!("No matching files found in {}", directory);
-        return Ok(());
+        return Err(format!("No matching files found in {}", directory));
     }
 
     let mut name_counts: HashMap<String, usize> = HashMap::new();

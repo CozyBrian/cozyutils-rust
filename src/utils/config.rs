@@ -15,16 +15,16 @@ fn load_config() -> Option<CozyConfig> {
 }
 
 fn resolve_home_dir() -> Option<PathBuf> {
-    if let Ok(home) = env::var("HOME") {
-        if !home.is_empty() {
-            return Some(PathBuf::from(home));
-        }
+    if let Ok(home) = env::var("HOME")
+        && !home.is_empty()
+    {
+        return Some(PathBuf::from(home));
     }
 
-    if let Ok(home) = env::var("USERPROFILE") {
-        if !home.is_empty() {
-            return Some(PathBuf::from(home));
-        }
+    if let Ok(home) = env::var("USERPROFILE")
+        && !home.is_empty()
+    {
+        return Some(PathBuf::from(home));
     }
 
     None

@@ -1,32 +1,27 @@
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 
 use regex::Regex;
 
-pub fn read_dir_and_sort(path: &str, ext_filter: &[String]) -> Vec<String> {
-    let metadata = match fs::metadata(path) {
-        Ok(value) => value,
-        Err(_) => {
-            println!("Directory not found: {}", path);
-            return Vec::new();
-        }
-    };
+static SPACE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r" {2,}").unwrap());
+static SEMICOLON_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r";+\n").unwrap());
+static NEWLINE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\n{2,}").unwrap());
+static SVG_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"<svg([^>]*)>").unwrap());
+
+pub fn read_dir_and_sort(path: &str, ext_filter: &[String]) -> Result<Vec<String>, String> {
+    let metadata = fs::metadata(path)
+        .map_err(|error| format!("Failed to read directory metadata for {}: {}", path, error))?;
 
     if !metadata.is_dir() {
-        println!("{} is not a directory.", path);
-        return Vec::new();
+        return Err(format!("{} is not a directory.", path));
     }
 
     let mut entries: Vec<String> = Vec::new();
     let normalized = normalize_extensions(ext_filter);
 
-    let read_dir = match fs::read_dir(path) {
-        Ok(value) => value,
-        Err(_) => {
-            println!("Directory not found: {}", path);
-            return Vec::new();
-        }
-    };
+    let read_dir = fs::read_dir(path)
+        .map_err(|error| format!("Failed to read directory {}: {}", path, error))?;
 
     for entry in read_dir.flatten() {
         let file_name = entry.file_name();
@@ -37,7 +32,7 @@ pub fn read_dir_and_sort(path: &str, ext_filter: &[String]) -> Vec<String> {
     }
 
     entries.sort();
-    entries
+    Ok(entries)
 }
 
 pub fn make_component_name(filename: &str) -> String {
@@ -54,7 +49,7 @@ pub fn make_component_name(filename: &str) -> String {
         .collect::<String>()
 }
 
-pub fn component_template(component_name: &str, content: &str) -> String {
+pub fn component_template(component_name: &str, content: &str) -> Result<String, String> {
     let template = format!(
         "\
 import React from \"react\";\n\nfunction {component_name}(props: React.JSX.IntrinsicElements[\"svg\"]) {{\n  return (\n    {content}\n  );\n}}\n\nexport default {component_name};\n"
@@ -62,13 +57,9 @@ import React from \"react\";\n\nfunction {component_name}(props: React.JSX.Intri
     format_svg_component(&template)
 }
 
-pub fn format_svg_component(content: &str) -> String {
+pub fn format_svg_component(content: &str) -> Result<String, String> {
     let has_props = content.contains("{...props}");
     let mut formatted = content.replace("\r\n", "\n");
-    let space_re = Regex::new(r" {2,}").unwrap();
-    let semicolon_re = Regex::new(r";+\n").unwrap();
-    let newline_re = Regex::new(r"\n{2,}").unwrap();
-    let svg_re = Regex::new(r"<svg([^>]*)>").unwrap();
 
     formatted = formatted
         .lines()
@@ -77,14 +68,13 @@ pub fn format_svg_component(content: &str) -> String {
         .collect::<Vec<_>>()
         .join("\n");
 
-    formatted = formatted.replace("{...props}", "{...props}");
     formatted = formatted.replace("\t", "  ");
-    formatted = space_re.replace_all(&formatted, "  ").to_string();
-    formatted = semicolon_re.replace_all(&formatted, ";\n").to_string();
-    formatted = newline_re.replace_all(&formatted, "\n\n").to_string();
+    formatted = SPACE_RE.replace_all(&formatted, "  ").to_string();
+    formatted = SEMICOLON_RE.replace_all(&formatted, ";\n").to_string();
+    formatted = NEWLINE_RE.replace_all(&formatted, "\n\n").to_string();
 
     if !has_props {
-        formatted = svg_re
+        formatted = SVG_RE
             .replacen(&formatted, 1, "<svg$1 {...props}>")
             .to_string();
     }
@@ -102,14 +92,16 @@ pub fn format_svg_component(content: &str) -> String {
 
         indented.push(format!("{}{}", "  ".repeat(indent_level), trimmed_line));
 
-        if trimmed_line.starts_with('<') && !trimmed_line.starts_with("</") {
-            if !trimmed_line.contains("/>") && !trimmed_line.ends_with("?>") {
-                indent_level += 1;
-            }
+        if trimmed_line.starts_with('<')
+            && !trimmed_line.starts_with("</")
+            && !trimmed_line.contains("/>")
+            && !trimmed_line.ends_with("?>")
+        {
+            indent_level += 1;
         }
     }
 
-    indented.join("\n").trim().to_string() + "\n"
+    Ok(indented.join("\n").trim().to_string() + "\n")
 }
 
 pub fn read_to_string(path: &Path) -> Result<String, String> {
@@ -155,4 +147,34 @@ fn normalize_extensions(ext_filter: &[String]) -> Vec<String> {
 fn has_matching_extension(name: &str, extensions: &[String]) -> bool {
     let lower = name.to_lowercase();
     extensions.iter().any(|ext| lower.ends_with(ext))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{format_svg_component, make_component_name};
+
+    #[test]
+    fn makes_component_name_from_hyphenated_filename() {
+        assert_eq!(make_component_name("arrow-left icon"), "ArrowLefticon");
+        assert_eq!(make_component_name("user-avatar"), "UserAvatar");
+    }
+
+    #[test]
+    fn format_svg_component_injects_props_and_indents_svg() {
+        let formatted = format_svg_component("<svg>\n  <g>\n    <path />\n  </g>\n</svg>\n")
+            .expect("svg should format");
+
+        assert_eq!(
+            formatted,
+            "<svg {...props}>\n  <g>\n    <path />\n  </g>\n</svg>\n"
+        );
+    }
+
+    #[test]
+    fn format_svg_component_does_not_duplicate_props() {
+        let formatted = format_svg_component("<svg {...props}>\n<path />\n</svg>\n")
+            .expect("svg should format");
+
+        assert_eq!(formatted.matches("{...props}").count(), 1);
+    }
 }

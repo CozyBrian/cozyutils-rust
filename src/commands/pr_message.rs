@@ -56,7 +56,7 @@ pub fn pr_message(args: Vec<String>) -> Result<(), String> {
         .options
         .get("base")
         .cloned()
-        .or_else(|| parsed.positional.get(0).cloned())
+        .or_else(|| parsed.positional.first().cloned())
         .unwrap_or_else(|| DEFAULT_BASE_REF.to_string());
     let output_path = parsed.options.get("out").cloned().unwrap_or_default();
     let backend = parsed
@@ -73,13 +73,13 @@ pub fn pr_message(args: Vec<String>) -> Result<(), String> {
             "opencode" => DEFAULT_OPENCODE_MODEL.to_string(),
             _ => DEFAULT_GEMINI_MODEL.to_string(),
         });
-    let clipboard_only = parsed.options.get("clipboard-only").is_some();
+    let clipboard_only = parsed.options.contains_key("clipboard-only");
     let clipboard = clipboard_only
-        || parsed.options.get("clipboard").is_some()
-        || parsed.options.get("copy").is_some();
-    let setup = parsed.options.get("setup").is_some();
+        || parsed.options.contains_key("clipboard")
+        || parsed.options.contains_key("copy");
+    let setup = parsed.options.contains_key("setup");
 
-    if parsed.options.get("help").is_some() {
+    if parsed.options.contains_key("help") {
         println!(
             "Usage: -prmsg [--base=origin/dev] [--out=path] [--model=MODEL] [--backend=gemini|opencode] [--clipboard] [--clipboard-only] [--setup]"
         );

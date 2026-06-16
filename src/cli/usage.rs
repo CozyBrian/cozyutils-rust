@@ -31,7 +31,7 @@ pub fn usage() -> String {
     for (flag, args, _) in COMMANDS {
         text.push_str(&format!("  {} {}\n", flag, args));
     }
-    text.push_str("\n");
+    text.push('\n');
     text
 }
 

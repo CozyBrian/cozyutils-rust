@@ -18,7 +18,7 @@ fn main() {
 
     if command.is_empty() || !command.starts_with('-') {
         print!("{}", usage());
-        return;
+        std::process::exit(1);
     }
 
     if matches!(command.as_str(), "-help" | "-h" | "--help") {
@@ -36,13 +36,14 @@ fn main() {
         "-config" => commands::config::config_command(rest),
         "-prmsg" => commands::pr_message::pr_message(rest),
         _ => {
-            println!("Invalid command");
-            print!("{}", usage());
-            return;
+            eprintln!("Invalid command: {}", command);
+            eprint!("{}", usage());
+            std::process::exit(1);
         }
     };
 
     if let Err(error) = result {
-        println!("{}", error);
+        eprintln!("{}", error);
+        std::process::exit(1);
     }
 }

@@ -52,12 +52,12 @@ pub fn parse_args(args: &[String]) -> ParsedArgs {
         }
 
         let next = args.get(index + 1);
-        if let Some(next_value) = next {
-            if !next_value.starts_with("--") {
-                options.insert(key.to_string(), next_value.to_string());
-                index += 2;
-                continue;
-            }
+        if let Some(next_value) = next
+            && !next_value.starts_with("--")
+        {
+            options.insert(key.to_string(), next_value.to_string());
+            index += 2;
+            continue;
         }
 
         options.insert(key.to_string(), "true".to_string());
@@ -67,5 +67,46 @@ pub fn parse_args(args: &[String]) -> ParsedArgs {
     ParsedArgs {
         positional,
         options,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_args;
+
+    fn args(values: &[&str]) -> Vec<String> {
+        values.iter().map(|value| value.to_string()).collect()
+    }
+
+    #[test]
+    fn parses_inline_and_separate_option_values() {
+        let parsed = parse_args(&args(&[
+            "input",
+            "--ext=.svg,.png",
+            "--out",
+            "index.ts",
+            "other",
+        ]));
+
+        assert_eq!(parsed.positional, vec!["input", "other"]);
+        assert_eq!(parsed.options.get("ext"), Some(&".svg,.png".to_string()));
+        assert_eq!(parsed.options.get("out"), Some(&"index.ts".to_string()));
+    }
+
+    #[test]
+    fn parses_boolean_flags_without_consuming_positionals() {
+        let parsed = parse_args(&args(&["--dry-run", "icons", "--copy", "index.ts"]));
+
+        assert_eq!(parsed.positional, vec!["icons", "index.ts"]);
+        assert_eq!(parsed.options.get("dry-run"), Some(&"true".to_string()));
+        assert_eq!(parsed.options.get("copy"), Some(&"true".to_string()));
+    }
+
+    #[test]
+    fn falls_back_to_true_when_option_value_is_missing() {
+        let parsed = parse_args(&args(&["--base", "--clipboard"]));
+
+        assert_eq!(parsed.options.get("base"), Some(&"true".to_string()));
+        assert_eq!(parsed.options.get("clipboard"), Some(&"true".to_string()));
     }
 }
