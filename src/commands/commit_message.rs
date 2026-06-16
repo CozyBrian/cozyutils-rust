@@ -1,10 +1,7 @@
 use crate::cli::args::parse_args;
-use crate::utils::config::{load_default_backend, load_gemini_api_key};
+use crate::utils::config::resolve_command_settings;
 use crate::utils::fs::write_string;
 use crate::utils::message::{copy_to_clipboard, generate_text, run_git_command};
-
-const DEFAULT_GEMINI_MODEL: &str = "gemini-3-flash-preview";
-const DEFAULT_OPENCODE_MODEL: &str = "openai/gpt-5.4-mini";
 
 #[derive(Debug)]
 struct CommitParts {
@@ -36,20 +33,12 @@ fn split_commit_message(text: &str) -> CommitParts {
 pub fn commit_message(args: Vec<String>) -> Result<(), String> {
     let parsed = parse_args(&args);
     let output_path = parsed.options.get("out").cloned().unwrap_or_default();
-    let backend = parsed
+    let provider = parsed
         .options
-        .get("backend")
-        .cloned()
-        .or_else(load_default_backend)
-        .unwrap_or_else(|| "gemini".to_string());
-    let model = parsed
-        .options
-        .get("model")
-        .cloned()
-        .unwrap_or_else(|| match backend.as_str() {
-            "opencode" => DEFAULT_OPENCODE_MODEL.to_string(),
-            _ => DEFAULT_GEMINI_MODEL.to_string(),
-        });
+        .get("provider")
+        .or_else(|| parsed.options.get("backend"))
+        .map(|value| value.as_str());
+    let model = parsed.options.get("model").map(|value| value.as_str());
     let clipboard_only = parsed.options.contains_key("clipboard-only");
     let clipboard = clipboard_only
         || parsed.options.contains_key("clipboard")
@@ -58,16 +47,12 @@ pub fn commit_message(args: Vec<String>) -> Result<(), String> {
 
     if parsed.options.contains_key("help") {
         println!(
-            "Usage: -cmsg [--out=path] [--model=MODEL] [--backend=gemini|opencode] [--clipboard] [--clipboard-only] [--commit]"
+            "Usage: -cmsg [--out=path] [--model=MODEL] [--provider=NAME] [--backend=NAME] [--clipboard] [--clipboard-only] [--commit]"
         );
         return Ok(());
     }
 
-    let api_key = if backend == "gemini" {
-        Some(load_gemini_api_key()?)
-    } else {
-        None
-    };
+    let settings = resolve_command_settings("cmsg", provider, model)?;
 
     let status = run_git_command(&["status"], "status")?;
     let diff_stat = run_git_command(&["diff", "--cached", "--stat"], "diff --cached --stat")?;
@@ -93,7 +78,7 @@ pub fn commit_message(args: Vec<String>) -> Result<(), String> {
   ]
   .join("\n");
 
-    let commit_message_text = generate_text(&backend, api_key.as_deref(), &model, &prompt)?;
+    let commit_message_text = generate_text(&settings, &prompt)?;
 
     if should_commit {
         let parts = split_commit_message(&commit_message_text);

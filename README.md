@@ -68,30 +68,102 @@ The CLI flags mirror the Bun version.
 
 - `-svg2tsx <directory> [--ext=.svg] [--dry-run] [--force] [--no-move]`
 - `-img2export <directory> <output_file> [--ext=.svg,.png] [--dry-run]`
-- `-prmsg [--base=origin/dev] [--out=path] [--model=MODEL] [--backend=gemini|opencode] [--clipboard] [--clipboard-only] [--copy]`
-- `-cmsg [--out=path] [--model=MODEL] [--backend=gemini|opencode] [--clipboard] [--clipboard-only] [--commit]`
-- `-config [--show] [--path] [--set-backend=gemini|opencode] [--unset-backend] [--set-key=VALUE] [--unset-key]`
+- `-prmsg [--base=origin/dev] [--out=path] [--model=MODEL] [--provider=NAME] [--backend=NAME] [--clipboard] [--clipboard-only] [--copy]`
+- `-cmsg [--out=path] [--model=MODEL] [--provider=NAME] [--backend=NAME] [--clipboard] [--clipboard-only] [--commit]`
+- `-config [--init] [--force] [--show] [--path] [--set-default-provider=NAME] [--set-command-provider=COMMAND:NAME] [--set-provider-type=NAME:TYPE] ...`
 
 ## Config
 
-Gemini-backed commands look for the API key in this order:
+AI commands now use named providers. `--provider` is the primary flag and `--backend` is kept as an alias.
 
-1) `GEMINI_API_KEY` environment variable
-2) `~/.cozyutils/config.json`
+Built-in provider templates:
+
+- `gemini`
+- `openrouter`
+- `deepseek`
+- `opencode`
+
+You can also define custom `openai-compatible` providers.
+
+Provider API keys are resolved in this order:
+
+1. The provider's configured `api_key_env` environment variable
+2. The provider's stored `api_key` in `~/.cozyutils/config.json`
 
 `~/.cozyutils/config.json` example:
 
 ```json
 {
-  "gemini_api_key": "YOUR_KEY_HERE",
-  "backend": "opencode"
+  "defaults": {
+    "provider": "openrouter",
+    "commands": {
+      "prmsg": {
+        "provider": "openrouter",
+        "model": "openai/gpt-5.4-mini"
+      },
+      "cmsg": {
+        "provider": "deepseek",
+        "model": "deepseek-chat"
+      }
+    }
+  },
+  "providers": {
+    "openrouter": {
+      "type": "openai-compatible",
+      "base_url": "https://openrouter.ai/api/v1",
+      "api_key_env": "OPENROUTER_API_KEY",
+      "default_model": "openai/gpt-5.4-mini"
+    },
+    "deepseek": {
+      "type": "openai-compatible",
+      "base_url": "https://api.deepseek.com/v1",
+      "api_key_env": "DEEPSEEK_API_KEY",
+      "default_model": "deepseek-chat"
+    },
+    "gemini": {
+      "type": "gemini",
+      "api_key_env": "GEMINI_API_KEY",
+      "default_model": "gemini-3-flash-preview"
+    },
+    "opencode": {
+      "type": "opencode",
+      "default_model": "openai/gpt-5.4-mini"
+    }
+  }
 }
 ```
 
-You can create or update the config with:
+This is a breaking config change. Older `gemini_api_key` and `backend` config fields are no longer supported.
+
+You can create a starter config with:
 
 ```bash
-./cozyutils -prmsg --setup --key=YOUR_KEY
-./cozyutils -config --set-backend=opencode
+./cozyutils -config --init
+```
+
+If the config already exists, overwrite it with:
+
+```bash
+./cozyutils -config --init --force
+```
+
+You can then update the config with:
+
+```bash
+./cozyutils -config --set-default-provider=openrouter
+./cozyutils -config --set-command-provider=cmsg:deepseek
+./cozyutils -config --set-provider-key-env=openrouter:OPENROUTER_API_KEY
+./cozyutils -config --set-provider-key-env=deepseek:DEEPSEEK_API_KEY
+./cozyutils -config --show
+```
+
+To add a custom OpenAI-compatible provider:
+
+```bash
+./cozyutils -config --set-provider-type=myproxy:openai-compatible
+./cozyutils -config --set-provider-base-url=myproxy:https://myproxy.example.com/v1
+./cozyutils -config --set-provider-key-env=myproxy:MYPROXY_API_KEY
+./cozyutils -config --set-provider-model=myproxy:gpt-4.1-mini
+./cozyutils -config --set-default-provider=myproxy
 ./cozyutils -config --show
 ```

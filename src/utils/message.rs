@@ -6,6 +6,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::Deserialize;
 use serde_json::json;
 
+use crate::utils::config::{ProviderConfig, ProviderType, ResolvedCommandSettings};
+
 const CLIPBOARD_COMMANDS: &[(&[&str], &str)] = &[
     (&["pbcopy"], "pbcopy"),
     (&["wl-copy"], "wl-copy"),
@@ -37,6 +39,39 @@ struct GeminiPart {
 
 #[derive(Debug, Deserialize)]
 struct GeminiError {
+    message: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenAiCompatibleResponse {
+    choices: Option<Vec<OpenAiChoice>>,
+    error: Option<OpenAiError>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenAiChoice {
+    message: Option<OpenAiMessage>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenAiMessage {
+    content: Option<OpenAiContent>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum OpenAiContent {
+    Text(String),
+    Parts(Vec<OpenAiContentPart>),
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenAiContentPart {
+    text: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenAiError {
     message: Option<String>,
 }
 
@@ -120,6 +155,81 @@ pub fn generate_gemini_text(api_key: &str, model: &str, prompt: &str) -> Result<
     Ok(text)
 }
 
+fn provider_type(provider_name: &str, provider: &ProviderConfig) -> Result<ProviderType, String> {
+    provider.r#type.clone().ok_or_else(|| {
+        format!(
+            "Provider '{}' is missing a type. Set one with -config --set-provider-type={}:TYPE.",
+            provider_name, provider_name
+        )
+    })
+}
+
+fn openai_content_to_text(content: OpenAiContent) -> String {
+    match content {
+        OpenAiContent::Text(text) => text,
+        OpenAiContent::Parts(parts) => parts
+            .into_iter()
+            .filter_map(|part| part.text)
+            .collect::<Vec<_>>()
+            .join(""),
+    }
+}
+
+pub fn generate_openai_compatible_text(
+    provider_name: &str,
+    provider: &ProviderConfig,
+    api_key: &str,
+    model: &str,
+    prompt: &str,
+) -> Result<String, String> {
+    let base_url = provider.base_url.as_deref().ok_or_else(|| {
+        format!(
+            "Provider '{}' is missing a base_url. Set one with -config --set-provider-base-url={}:URL.",
+            provider_name, provider_name
+        )
+    })?;
+    let url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
+    let body = json!({
+      "model": model,
+      "messages": [{ "role": "user", "content": prompt }],
+      "temperature": 0.2,
+    });
+
+    let response = ureq::post(&url)
+        .set("Content-Type", "application/json")
+        .set("Authorization", &format!("Bearer {}", api_key))
+        .send_json(body)
+        .map_err(|error| format!("{} API request failed: {}", provider_name, error))?;
+
+    let data: OpenAiCompatibleResponse = response
+        .into_json()
+        .map_err(|error| format!("{} API response parse failed: {}", provider_name, error))?;
+
+    if let Some(error) = data.error
+        && let Some(message) = error.message
+    {
+        return Err(format!("{} API error: {}", provider_name, message));
+    }
+
+    let text = data
+        .choices
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|choice| choice.message)
+        .filter_map(|message| message.content)
+        .map(openai_content_to_text)
+        .collect::<Vec<_>>()
+        .join("")
+        .trim()
+        .to_string();
+
+    if text.is_empty() {
+        return Err(format!("{} response was empty.", provider_name));
+    }
+
+    Ok(text)
+}
+
 pub fn generate_opencode_text(model: &str, prompt: &str) -> Result<String, String> {
     let prompt_path = write_temp_prompt(prompt)?;
     let prompt_path_str = prompt_path.to_str().ok_or_else(|| {
@@ -184,25 +294,47 @@ pub fn generate_opencode_text(model: &str, prompt: &str) -> Result<String, Strin
     Ok(text)
 }
 
-pub fn generate_text(
-    backend: &str,
-    api_key: Option<&str>,
-    model: &str,
-    prompt: &str,
-) -> Result<String, String> {
-    match backend {
-        "gemini" => {
-            let api_key = api_key.ok_or_else(|| {
-                "Missing GEMINI_API_KEY environment variable or ~/.cozyutils/config.json entry."
-                    .to_string()
+pub fn generate_text(settings: &ResolvedCommandSettings, prompt: &str) -> Result<String, String> {
+    let provider_type = provider_type(&settings.provider_name, &settings.provider)?;
+
+    match provider_type {
+        ProviderType::Gemini => {
+            let api_key = settings.api_key.as_deref().ok_or_else(|| {
+                let env_name = settings
+                    .provider
+                    .api_key_env
+                    .as_deref()
+                    .unwrap_or("GEMINI_API_KEY");
+                format!(
+                    "Provider '{}' requires an API key. Set {} or store api_key in ~/.cozyutils/config.json.",
+                    settings.provider_name, env_name
+                )
             })?;
-            generate_gemini_text(api_key, model, prompt)
+            generate_gemini_text(api_key, &settings.model, prompt)
         }
-        "opencode" => generate_opencode_text(model, prompt),
-        _ => Err(format!(
-            "Unsupported backend '{}'. Use 'gemini' or 'opencode'.",
-            backend
-        )),
+        ProviderType::OpenaiCompatible => {
+            let api_key = settings.api_key.as_deref().ok_or_else(|| {
+                if let Some(env_name) = settings.provider.api_key_env.as_deref() {
+                    format!(
+                        "Provider '{}' requires an API key. Set {} or store api_key in ~/.cozyutils/config.json.",
+                        settings.provider_name, env_name
+                    )
+                } else {
+                    format!(
+                        "Provider '{}' requires an API key. Set api_key_env or store api_key in ~/.cozyutils/config.json.",
+                        settings.provider_name
+                    )
+                }
+            })?;
+            generate_openai_compatible_text(
+                &settings.provider_name,
+                &settings.provider,
+                api_key,
+                &settings.model,
+                prompt,
+            )
+        }
+        ProviderType::Opencode => generate_opencode_text(&settings.model, prompt),
     }
 }
 
@@ -246,4 +378,77 @@ pub fn copy_to_clipboard(text: &str) -> Result<String, String> {
     }
 
     Err("No clipboard command available. Install pbcopy, wl-copy, xclip, or xsel.".to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{OpenAiCompatibleResponse, OpenAiContent, generate_openai_compatible_text};
+    use crate::utils::config::{ProviderConfig, ProviderType};
+
+    #[test]
+    fn parses_string_openai_content() {
+        let data: OpenAiCompatibleResponse =
+            serde_json::from_str(r#"{"choices":[{"message":{"content":"hello"}}]}"#).unwrap();
+
+        let text = data
+            .choices
+            .unwrap()
+            .into_iter()
+            .next()
+            .unwrap()
+            .message
+            .unwrap()
+            .content
+            .unwrap();
+
+        assert!(matches!(text, OpenAiContent::Text(value) if value == "hello"));
+    }
+
+    #[test]
+    fn parses_parts_openai_content() {
+        let data: OpenAiCompatibleResponse = serde_json::from_str(
+            r#"{"choices":[{"message":{"content":[{"text":"hello "},{"text":"world"}]}}]}"#,
+        )
+        .unwrap();
+
+        let text = data
+            .choices
+            .unwrap()
+            .into_iter()
+            .next()
+            .unwrap()
+            .message
+            .unwrap()
+            .content
+            .unwrap();
+
+        match text {
+            OpenAiContent::Parts(parts) => {
+                assert_eq!(parts.len(), 2);
+                assert_eq!(parts[0].text.as_deref(), Some("hello "));
+                assert_eq!(parts[1].text.as_deref(), Some("world"));
+            }
+            _ => panic!("expected parts content"),
+        }
+    }
+
+    #[test]
+    fn requires_base_url_for_openai_compatible_provider() {
+        let error = generate_openai_compatible_text(
+            "custom",
+            &ProviderConfig {
+                r#type: Some(ProviderType::OpenaiCompatible),
+                base_url: None,
+                api_key_env: None,
+                api_key: None,
+                default_model: None,
+            },
+            "key",
+            "model",
+            "prompt",
+        )
+        .unwrap_err();
+
+        assert!(error.contains("missing a base_url"));
+    }
 }

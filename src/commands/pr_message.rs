@@ -1,15 +1,12 @@
-use std::env;
 use std::path::Path;
 use std::process::Command;
 
 use crate::cli::args::parse_args;
-use crate::utils::config::{load_default_backend, load_gemini_api_key, write_config};
+use crate::utils::config::resolve_command_settings;
 use crate::utils::fs::write_string;
 use crate::utils::message::{copy_to_clipboard, generate_text, run_git_command};
 
 const DEFAULT_BASE_REF: &str = "origin/dev";
-const DEFAULT_GEMINI_MODEL: &str = "gemini-3-flash-preview";
-const DEFAULT_OPENCODE_MODEL: &str = "openai/gpt-5.4-mini";
 const BASE_REF_FALLBACKS: &[&str] = &["origin/main", "origin/master", "main", "master", "dev"];
 
 fn check_git_ref(ref_name: &str) -> bool {
@@ -59,50 +56,32 @@ pub fn pr_message(args: Vec<String>) -> Result<(), String> {
         .or_else(|| parsed.positional.first().cloned())
         .unwrap_or_else(|| DEFAULT_BASE_REF.to_string());
     let output_path = parsed.options.get("out").cloned().unwrap_or_default();
-    let backend = parsed
+    let provider = parsed
         .options
-        .get("backend")
-        .cloned()
-        .or_else(load_default_backend)
-        .unwrap_or_else(|| "gemini".to_string());
-    let model = parsed
-        .options
-        .get("model")
-        .cloned()
-        .unwrap_or_else(|| match backend.as_str() {
-            "opencode" => DEFAULT_OPENCODE_MODEL.to_string(),
-            _ => DEFAULT_GEMINI_MODEL.to_string(),
-        });
+        .get("provider")
+        .or_else(|| parsed.options.get("backend"))
+        .map(|value| value.as_str());
+    let model = parsed.options.get("model").map(|value| value.as_str());
     let clipboard_only = parsed.options.contains_key("clipboard-only");
     let clipboard = clipboard_only
         || parsed.options.contains_key("clipboard")
         || parsed.options.contains_key("copy");
-    let setup = parsed.options.contains_key("setup");
 
     if parsed.options.contains_key("help") {
         println!(
-            "Usage: -prmsg [--base=origin/dev] [--out=path] [--model=MODEL] [--backend=gemini|opencode] [--clipboard] [--clipboard-only] [--setup]"
+            "Usage: -prmsg [--base=origin/dev] [--out=path] [--model=MODEL] [--provider=NAME] [--backend=NAME] [--clipboard] [--clipboard-only]"
         );
         return Ok(());
     }
 
-    if setup {
-        let api_key = env::var("GEMINI_API_KEY")
-            .ok()
-            .or_else(|| parsed.options.get("key").cloned());
-        if backend == "gemini" && api_key.is_none() {
-            return Err("Provide the API key via GEMINI_API_KEY or --key.".to_string());
-        }
-        let path = write_config(api_key.as_deref(), Some(&backend))?;
-        println!("prMessage - Config written to {}", path.display());
-        return Ok(());
+    if parsed.options.contains_key("setup") {
+        return Err(
+            "-prmsg --setup is no longer supported. Use -config to manage providers and defaults."
+                .to_string(),
+        );
     }
 
-    let api_key = if backend == "gemini" {
-        Some(load_gemini_api_key()?)
-    } else {
-        None
-    };
+    let settings = resolve_command_settings("prmsg", provider, model)?;
 
     let resolved_base_ref = resolve_base_ref(&base_ref)?;
     let status = run_git_command(&["status"], "status")?;
@@ -147,7 +126,7 @@ pub fn pr_message(args: Vec<String>) -> Result<(), String> {
     ]
     .join("\n");
 
-    let pr_message_text = generate_text(&backend, api_key.as_deref(), &model, &prompt)?;
+    let pr_message_text = generate_text(&settings, &prompt)?;
 
     if !output_path.is_empty() && !clipboard_only {
         let path = Path::new(&output_path);

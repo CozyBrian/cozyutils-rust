@@ -17,6 +17,8 @@ fn is_boolean_flag(flag: &str) -> bool {
             | "clipboard-only"
             | "setup"
             | "commit"
+            | "init"
+            | "unset-default-provider"
     ) || flag == "copy"
 }
 
